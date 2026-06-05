@@ -3,24 +3,23 @@ name: Kernel Build
 on:
   workflow_dispatch:
     inputs:
-      build_type:
-        description: 'Build type'
+      build_susfs:
+        description: 'KSU-Next + SUSFS'
+        type: boolean
+        default: true
         required: true
-        default: 'ksunsusfs'
-        type: choice
-        options:
-          - ksunsusfs
-          - ksundroid
+      build_droid:
+        description: 'KSU-Next + DroidSpace'
+        type: boolean
+        default: false
+        required: true
 
-run-name: ${{ inputs.build_type }} (${{ github.run_number }})
-
-env:
-  BUILD_TYPE: ${{ inputs.build_type }}
+run-name: build (${{ github.run_number }})
 
 jobs:
   build:
     runs-on: [self-hosted, linux, arm64]
-    timeout-minutes: 120
+    timeout-minutes: 240
     permissions:
       contents: write
 
@@ -29,39 +28,64 @@ jobs:
 
       - name: Setup
         run: |
-          command -v kernel-setup-patches || { echo "Missing kernel-setup-patches"; exit 1; }
+          command -v kernel-setup-patches    || { echo "Missing kernel-setup-patches"; exit 1; }
           command -v kernel-setup-droidspace || { echo "Missing kernel-setup-droidspace"; exit 1; }
           /usr/lib/llvm-14/bin/clang --version | head -1
 
-      - name: Patch
-        run: |
-          if [ "$BUILD_TYPE" = "ksundroid" ]; then
-            kernel-setup-droidspace
-          else
-            kernel-setup-patches
-          fi
-        timeout-minutes: 10
-
-      - name: Build
-        run: kernel-build "${GITHUB_WORKSPACE}/build/out"
-        timeout-minutes: 90
-
-      - name: Bootimg
+      - name: Multi-build
         run: |
           DATE=$(date +%Y%m%d)
-          if [ "$BUILD_TYPE" = "ksundroid" ]; then
-            LABEL="KSUN+droidspace"
-          else
-            LABEL="KSUN+susfs"
-          fi
-          kernel-make-bootimg \
-            "${GITHUB_WORKSPACE}/build/out/Image" \
-            "${GITHUB_WORKSPACE}/boot-${LABEL}_${DATE}.img"
 
-      - name: Upload
+          for type in ksunsusfs ksundroid; do
+            # Check if this type is selected
+            if [ "$type" = "ksunsusfs" ] && [ "${{ inputs.build_susfs }}" != "true" ]; then
+              echo "Skipping ksunsusfs (not selected)"
+              continue
+            fi
+            if [ "$type" = "ksundroid" ] && [ "${{ inputs.build_droid }}" != "true" ]; then
+              echo "Skipping ksundroid (not selected)"
+              continue
+            fi
+
+            echo "============================================"
+            echo "  Building: $type"
+            echo "============================================"
+
+            # Reset kernel source to clean state
+            echo "[*] Resetting kernel source..."
+            cd /home/ubuntu/kernelcli/build/sm8550
+            git checkout -- . 2>/dev/null || true
+            git clean -fd 2>/dev/null || true
+
+            # Apply patches
+            echo "[*] Applying patches..."
+            if [ "$type" = "ksundroid" ]; then
+              kernel-setup-droidspace
+              LABEL="KSUN+droidspace"
+            else
+              kernel-setup-patches
+              LABEL="KSUN+susfs"
+            fi
+
+            # Build
+            kernel-build "${GITHUB_WORKSPACE}/build/out"
+
+            # Make bootimg with type-specific name
+            kernel-make-bootimg \
+              "${GITHUB_WORKSPACE}/build/out/Image" \
+              "${GITHUB_WORKSPACE}/boot-${LABEL}_${DATE}.img"
+
+            echo "==> boot-${LABEL}_${DATE}.img ready"
+
+            # Save .config for this build
+            mkdir -p "${GITHUB_WORKSPACE}/build/out/${type}"
+            cp /home/ubuntu/kernelcli/build/sm8550/out/.config "${GITHUB_WORKSPACE}/build/out/${type}/.config" 2>/dev/null || true
+          done
+
+      - name: Upload boot images
         uses: actions/upload-artifact@v4
         with:
-          name: boot-${{ inputs.build_type }}
+          name: boot-images
           path: boot-*.img
           compression-level: 0
           retention-days: 90
@@ -78,19 +102,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y%m%d)
-          if [ "$BUILD_TYPE" = "ksundroid" ]; then
-            LABEL="KSUN+droidspace"
+
+          if [ "${{ inputs.build_susfs }}" = "true" ] && [ "${{ inputs.build_droid }}" = "true" ]; then
+            TAG="ksun-multi-${DATE}"
+            TITLE="KSU-Next Multi Build ${DATE}"
+            NOTES="KSU-Next + SUSFS + DroidSpace | built $(date)"
+          elif [ "${{ inputs.build_susfs }}" = "true" ]; then
+            TAG="ksunsusfs-${DATE}"
+            TITLE="boot-KSUN+susfs ${DATE}"
+            NOTES="KSU-Next + SUSFS | built $(date)"
+          elif [ "${{ inputs.build_droid }}" = "true" ]; then
             TAG="ksundroid-${DATE}"
+            TITLE="boot-KSUN+droidspace ${DATE}"
             NOTES="KSU-Next + DroidSpace | built $(date)"
           else
-            LABEL="KSUN+susfs"
-            TAG="ksunsusfs-${DATE}"
-            NOTES="KSU-Next + SUSFS | built $(date)"
+            echo "Nothing selected — skipping release"
+            exit 0
           fi
-          IMG="boot-${LABEL}_${DATE}.img"
+
           if gh release view "$TAG" &>/dev/null; then
-            gh release upload "$TAG" "$IMG" --clobber
+            gh release upload "$TAG" boot-*.img --clobber
           else
-            gh release create "$TAG" "$IMG" \
-              --title "boot-${LABEL} ${DATE}" --notes "$NOTES"
+            gh release create "$TAG" boot-*.img \
+              --title "$TITLE" --notes "$NOTES"
           fi
