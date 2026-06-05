@@ -2,21 +2,8 @@ name: Kernel Build
 
 on:
   workflow_dispatch:
-    inputs:
-      soc:
-        description: SoC
-        required: true
-        default: sm8550
-      branch:
-        description: Branch
-        required: true
-        default: sixteen-qpr2
-      release_tag:
-        description: Release tag (empty = artifact only)
-        required: false
-        default: ""
 
-run-name: ${{ inputs.branch }} ${{ inputs.soc }}
+run-name: build $(date +%Y%m%d)
 
 jobs:
   build:
@@ -32,39 +19,44 @@ jobs:
           /usr/lib/llvm-14/bin/clang --version | head -1
 
       - name: Patch
-        run: kernel-setup-patches "${{ inputs.soc }}" "${{ inputs.branch }}"
+        run: kernel-setup-patches
         timeout-minutes: 10
 
       - name: Build
-        run: kernel-build "${{ inputs.soc }}"
+        run: kernel-build
         timeout-minutes: 90
 
       - name: Bootimg
-        run: kernel-make-bootimg "${{ inputs.soc }}"
+        run: |
+          DATE=$(date +%Y%m%d)
+          kernel-make-bootimg "${GITHUB_WORKSPACE}/boot-KSUN+susfs_${DATE}.img"
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload
+        uses: actions/upload-artifact@v4
         with:
-          name: patched-boot-${{ inputs.branch }}-${{ inputs.soc }}
-          path: patched-boot.img
+          name: boot-KSUN+susfs
+          path: boot-KSUN+susfs_*.img
           compression-level: 0
-          retention-days: 7
+          retention-days: 90
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
         with:
           name: build-logs
           path: build/out/*.log
-          retention-days: 7
+          retention-days: 90
 
       - name: Release
-        if: inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ inputs.release_tag }}"
-          NOTES="Branch: ${{ inputs.branch }} | SoC: ${{ inputs.soc }}"
+          DATE=$(date +%Y%m%d)
+          TAG="ksunsusfs-${DATE}"
+          NOTES="KSU-Next + SUSFS | built $(date)"
+          IMG="boot-KSUN+susfs_${DATE}.img"
           if gh release view "$TAG" &>/dev/null; then
-            gh release upload "$TAG" patched-boot.img --clobber
+            gh release upload "$TAG" "$IMG" --clobber
           else
-            gh release create "$TAG" patched-boot.img \
-              --title "Kernel $TAG" --notes "$NOTES"
+            gh release create "$TAG" "$IMG" \
+              --title "boot-KSUN+susfs ${DATE}" --notes "$NOTES"
           fi
