@@ -102,27 +102,34 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y%m%d)
+          CREATED=0
 
-          if [ "${{ inputs.build_susfs }}" = "true" ] && [ "${{ inputs.build_droid }}" = "true" ]; then
-            TAG="ksun-multi-${DATE}"
-            TITLE="KSU-Next Multi Build ${DATE}"
-            NOTES="KSU-Next + SUSFS + DroidSpace | built $(date)"
-          elif [ "${{ inputs.build_susfs }}" = "true" ]; then
-            TAG="ksunsusfs-${DATE}"
-            TITLE="boot-KSUN+susfs ${DATE}"
-            NOTES="KSU-Next + SUSFS | built $(date)"
-          elif [ "${{ inputs.build_droid }}" = "true" ]; then
-            TAG="ksundroid-${DATE}"
-            TITLE="boot-KSUN+droidspace ${DATE}"
-            NOTES="KSU-Next + DroidSpace | built $(date)"
-          else
+          for type in ksunsusfs ksundroid; do
+            if [ "$type" = "ksunsusfs" ] && [ "${{ inputs.build_susfs }}" != "true" ]; then continue; fi
+            if [ "$type" = "ksundroid" ] && [ "${{ inputs.build_droid }}" != "true" ]; then continue; fi
+
+            if [ "$type" = "ksundroid" ]; then
+              TAG="ksundroid-${DATE}"
+              TITLE="boot-KSUN+droidspace ${DATE}"
+              NOTES="KSU-Next + DroidSpace | built $(date)"
+              IMG="boot-KSUN+droidspace_${DATE}.img"
+            else
+              TAG="ksunsusfs-${DATE}"
+              TITLE="boot-KSUN+susfs ${DATE}"
+              NOTES="KSU-Next + SUSFS | built $(date)"
+              IMG="boot-KSUN+susfs_${DATE}.img"
+            fi
+
+            if gh release view "$TAG" &>/dev/null; then
+              gh release upload "$TAG" "$IMG" --clobber
+            else
+              gh release create "$TAG" "$IMG" \
+                --title "$TITLE" --notes "$NOTES"
+            fi
+            CREATED=1
+          done
+
+          if [ "$CREATED" -eq 0 ]; then
             echo "Nothing selected — skipping release"
             exit 0
-          fi
-
-          if gh release view "$TAG" &>/dev/null; then
-            gh release upload "$TAG" boot-*.img --clobber
-          else
-            gh release create "$TAG" boot-*.img \
-              --title "$TITLE" --notes "$NOTES"
           fi
