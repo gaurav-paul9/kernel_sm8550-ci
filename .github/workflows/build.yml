@@ -1,0 +1,70 @@
+name: Kernel Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      soc:
+        description: SoC
+        required: true
+        default: sm8550
+      branch:
+        description: Branch
+        required: true
+        default: sixteen-qpr2
+      release_tag:
+        description: Release tag (empty = artifact only)
+        required: false
+        default: ""
+
+run-name: ${{ inputs.branch }} ${{ inputs.soc }}
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, arm64]
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        run: |
+          command -v kernel-setup-patches || { echo "Missing kernel-setup-patches"; exit 1; }
+          /usr/lib/llvm-14/bin/clang --version | head -1
+
+      - name: Patch
+        run: kernel-setup-patches "${{ inputs.soc }}" "${{ inputs.branch }}"
+        timeout-minutes: 10
+
+      - name: Build
+        run: kernel-build "${{ inputs.soc }}"
+        timeout-minutes: 90
+
+      - name: Bootimg
+        run: kernel-make-bootimg "${{ inputs.soc }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-boot-${{ inputs.branch }}-${{ inputs.soc }}
+          path: patched-boot.img
+          compression-level: 0
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build/out/*.log
+          retention-days: 7
+
+      - name: Release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          NOTES="Branch: ${{ inputs.branch }} | SoC: ${{ inputs.soc }}"
+          if gh release view "$TAG" &>/dev/null; then
+            gh release upload "$TAG" patched-boot.img --clobber
+          else
+            gh release create "$TAG" patched-boot.img \
+              --title "Kernel $TAG" --notes "$NOTES"
+          fi
