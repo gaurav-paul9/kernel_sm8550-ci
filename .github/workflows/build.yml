@@ -51,14 +51,7 @@ jobs:
             echo "  Building: $type"
             echo "============================================"
 
-            # Reset kernel source to clean state
-            echo "[*] Resetting kernel source..."
-            cd /home/ubuntu/kernelcli/build/sm8550
-            git checkout -- . 2>/dev/null || true
-            git clean -fd 2>/dev/null || true
-
-            # Apply patches
-            echo "[*] Applying patches..."
+            # Apply patches (command handles git reset internally)
             if [ "$type" = "ksundroid" ]; then
               kernel-setup-droidspace
               LABEL="KSUN+droidspace"
