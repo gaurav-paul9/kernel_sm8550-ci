@@ -23,13 +23,15 @@ jobs:
         timeout-minutes: 10
 
       - name: Build
-        run: kernel-build
+        run: kernel-build "${GITHUB_WORKSPACE}/build/out"
         timeout-minutes: 90
 
       - name: Bootimg
         run: |
           DATE=$(date +%Y%m%d)
-          kernel-make-bootimg "${GITHUB_WORKSPACE}/boot-KSUN+susfs_${DATE}.img"
+          kernel-make-bootimg \
+            "${GITHUB_WORKSPACE}/build/out/Image" \
+            "${GITHUB_WORKSPACE}/boot-KSUN+susfs_${DATE}.img"
 
       - name: Upload
         uses: actions/upload-artifact@v4
