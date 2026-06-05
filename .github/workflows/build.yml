@@ -2,8 +2,20 @@ name: Kernel Build
 
 on:
   workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'ksunsusfs'
+        type: choice
+        options:
+          - ksunsusfs
+          - ksundroid
 
-run-name: build $(date +%Y%m%d)
+run-name: ${{ inputs.build_type }} (${{ github.run_number }})
+
+env:
+  BUILD_TYPE: ${{ inputs.build_type }}
 
 jobs:
   build:
@@ -18,10 +30,16 @@ jobs:
       - name: Setup
         run: |
           command -v kernel-setup-patches || { echo "Missing kernel-setup-patches"; exit 1; }
+          command -v kernel-setup-droidspace || { echo "Missing kernel-setup-droidspace"; exit 1; }
           /usr/lib/llvm-14/bin/clang --version | head -1
 
       - name: Patch
-        run: kernel-setup-patches
+        run: |
+          if [ "$BUILD_TYPE" = "ksundroid" ]; then
+            kernel-setup-droidspace
+          else
+            kernel-setup-patches
+          fi
         timeout-minutes: 10
 
       - name: Build
@@ -31,15 +49,20 @@ jobs:
       - name: Bootimg
         run: |
           DATE=$(date +%Y%m%d)
+          if [ "$BUILD_TYPE" = "ksundroid" ]; then
+            LABEL="KSUN+droidspace"
+          else
+            LABEL="KSUN+susfs"
+          fi
           kernel-make-bootimg \
             "${GITHUB_WORKSPACE}/build/out/Image" \
-            "${GITHUB_WORKSPACE}/boot-KSUN+susfs_${DATE}.img"
+            "${GITHUB_WORKSPACE}/boot-${LABEL}_${DATE}.img"
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: boot-KSUN+susfs
-          path: boot-KSUN+susfs_*.img
+          name: boot-${{ inputs.build_type }}
+          path: boot-*.img
           compression-level: 0
           retention-days: 90
 
@@ -55,12 +78,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y%m%d)
-          TAG="ksunsusfs-${DATE}"
-          NOTES="KSU-Next + SUSFS | built $(date)"
-          IMG="boot-KSUN+susfs_${DATE}.img"
+          if [ "$BUILD_TYPE" = "ksundroid" ]; then
+            LABEL="KSUN+droidspace"
+            TAG="ksundroid-${DATE}"
+            NOTES="KSU-Next + DroidSpace | built $(date)"
+          else
+            LABEL="KSUN+susfs"
+            TAG="ksunsusfs-${DATE}"
+            NOTES="KSU-Next + SUSFS | built $(date)"
+          fi
+          IMG="boot-${LABEL}_${DATE}.img"
           if gh release view "$TAG" &>/dev/null; then
             gh release upload "$TAG" "$IMG" --clobber
           else
             gh release create "$TAG" "$IMG" \
-              --title "boot-KSUN+susfs ${DATE}" --notes "$NOTES"
+              --title "boot-${LABEL} ${DATE}" --notes "$NOTES"
           fi
