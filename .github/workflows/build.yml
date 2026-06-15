@@ -33,17 +33,19 @@ jobs:
           /usr/lib/llvm-14/bin/clang --version | head -1
 
       - name: Multi-build
+        env:
+          KERNEL_REPO: https://github.com/gaurav-paul9/android_kernel_oneplus_sm8550.git
+          KERNEL_BRANCH: yaap
         run: |
           DATE=$(date +%Y%m%d)
 
-          for type in ksunsusfs ksundroid; do
-            # Check if this type is selected
+          for type in ksunsusfs ksundroidspace; do
             if [ "$type" = "ksunsusfs" ] && [ "${{ inputs.build_susfs }}" != "true" ]; then
               echo "Skipping ksunsusfs (not selected)"
               continue
             fi
-            if [ "$type" = "ksundroid" ] && [ "${{ inputs.build_droid }}" != "true" ]; then
-              echo "Skipping ksundroid (not selected)"
+            if [ "$type" = "ksundroidspace" ] && [ "${{ inputs.build_droid }}" != "true" ]; then
+              echo "Skipping ksundroidspace (not selected)"
               continue
             fi
 
@@ -51,8 +53,16 @@ jobs:
             echo "  Building: $type"
             echo "============================================"
 
-            # Apply patches (command handles git reset internally)
-            if [ "$type" = "ksundroid" ]; then
+            KERNEL_SOURCE="${GITHUB_WORKSPACE}/kernel-source"
+
+            # Fresh shallow clone
+            echo "Cloning kernel source ($KERNEL_BRANCH)..."
+            git clone --depth 1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KERNEL_SOURCE"
+
+            # Apply patches and build
+            export KERNEL_SOURCE_DIR="$KERNEL_SOURCE"
+
+            if [ "$type" = "ksundroidspace" ]; then
               kernel-setup-droidspace
               LABEL="KSUN+droidspace"
             else
@@ -63,16 +73,20 @@ jobs:
             # Build
             kernel-build "${GITHUB_WORKSPACE}/build/out"
 
-            # Make bootimg with type-specific name
+            # Make bootimg
             kernel-make-bootimg \
               "${GITHUB_WORKSPACE}/build/out/Image" \
               "${GITHUB_WORKSPACE}/boot-${LABEL}_${DATE}.img"
 
             echo "==> boot-${LABEL}_${DATE}.img ready"
 
-            # Save .config for this build
+            # Save .config
             mkdir -p "${GITHUB_WORKSPACE}/build/out/${type}"
-            cp /home/ubuntu/kernelcli/build/sm8550/out/.config "${GITHUB_WORKSPACE}/build/out/${type}/.config" 2>/dev/null || true
+            cp "$KERNEL_SOURCE/out/.config" "${GITHUB_WORKSPACE}/build/out/${type}/.config" 2>/dev/null || true
+
+            # Remove kernel source
+            echo "Cleaning up kernel source..."
+            rm -rf "$KERNEL_SOURCE"
           done
 
       - name: Upload boot images
@@ -97,12 +111,12 @@ jobs:
           DATE=$(date +%Y%m%d)
           CREATED=0
 
-          for type in ksunsusfs ksundroid; do
+          for type in ksunsusfs ksundroidspace; do
             if [ "$type" = "ksunsusfs" ] && [ "${{ inputs.build_susfs }}" != "true" ]; then continue; fi
-            if [ "$type" = "ksundroid" ] && [ "${{ inputs.build_droid }}" != "true" ]; then continue; fi
+            if [ "$type" = "ksundroidspace" ] && [ "${{ inputs.build_droid }}" != "true" ]; then continue; fi
 
-            if [ "$type" = "ksundroid" ]; then
-              TAG="ksundroid-${DATE}"
+            if [ "$type" = "ksundroidspace" ]; then
+              TAG="ksundroidspace-${DATE}"
               TITLE="boot-KSUN+droidspace ${DATE}"
               NOTES="KSU-Next + DroidSpace | built $(date)"
               IMG="boot-KSUN+droidspace_${DATE}.img"
